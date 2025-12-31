@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Инициализация клиента Google AI (Новый стандарт)
 client = genai.Client(api_key=GEMINI_KEY)
-MODEL_ID = "gemini-1.5-flash-exp"
+MODEL_ID = "gemini-1.5-flash"
 
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
