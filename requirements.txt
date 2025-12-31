@@ -1,4 +1,4 @@
-aiogram
-google-generativeai
-aiohttp
-Pillow
+aiogram==3.17.0
+google-genai==0.3.0
+aiohttp==3.11.11
+Pillow==11.1.0
