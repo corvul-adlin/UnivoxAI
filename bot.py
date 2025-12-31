@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 import io
-import aiohttp  # Библиотека для выполнения HTTP-запросов (нужна для /deploy)
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -10,111 +9,82 @@ import google.generativeai as genai
 from aiohttp import web
 from PIL import Image
 
-# --- [ КОНФИГУРАЦИЯ СИСТЕМЫ ] ---
-
-# Загружаем ключи из переменных окружения Render
+# --- КОНФИГУРАЦИЯ СИСТЕМЫ ---
+# Загрузка токенов из переменных окружения (Environment Variables)
 TG_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-DEPLOY_HOOK_URL = os.getenv("DEPLOY_HOOK_URL")
-# Преобразуем ADMIN_ID в число, по умолчанию 0
-try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
-except (ValueError, TypeError):
-    ADMIN_ID = 0
+PORT = int(os.getenv("PORT", 8000))
 
-# Порт для веб-сервера (Render использует 10000 по умолчанию)
-PORT = int(os.getenv("PORT", 10000))
-
-# Настройка логирования для отслеживания работы бота в реальном времени
+# Настройка логирования для отслеживания состояния сервера
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Настройка ИИ модели Gemini 2.0 Flash
+# Инициализация ИИ-ядра Gemini 2.0 Flash
 genai.configure(api_key=GEMINI_KEY)
-# Подключаем инструмент Google Search для актуальных ответов
+
+# Подключение инструментов поиска (Grounding) для актуальных ответов
+tools = [{"google_search": {}}]
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash-exp', 
-    tools=[{"google_search": {}}]
+    tools=tools
 )
 
-# Оперативная память для хранения контекста диалогов
+# Оперативное хранилище сессий {user_id: {'chat': session, 'count': int}}
 user_data = {}
-WARNING_THRESHOLD = 15  # Лимит сообщений до предложения очистить чат
+WARNING_THRESHOLD = 15 # Порог предупреждения о длине контекста
 
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
-# --- [ СЛУЖЕБНЫЕ ФУНКЦИИ ] ---
+# --- ВСПОМОГАТЕЛЬНАЯ ЛОГИКА ---
 
 def init_chat(uid):
-    """Создает новую сессию чата с поддержкой инструментов (Google Search)"""
+    """
+    Инициализирует новую сессию чата для пользователя.
+    Автоматически включает вызов функций (поиск в Google).
+    """
     user_data[uid] = {
         'chat': model.start_chat(history=[], enable_automatic_function_calling=True),
         'count': 0
     }
 
-# --- [ ОБРАБОТЧИКИ КОМАНД ] ---
-
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
-    """Приветствие и инициализация пользователя"""
+    """Команда запуска бота и приветствия"""
     init_chat(message.from_user.id)
-    welcome_text = (
-        "🚀 **UnivoxAI v3.2: Полная сборка**\n\n"
-        "Я запущен и готов к работе на Render!\n\n"
-        "**Мои возможности:**\n"
-        "• 🔍 Поиск в Google в реальном времени\n"
-        "• 🎙 Понимание голосовых сообщений\n"
-        "• 📸 Анализ любых изображений\n"
-        "• 🧠 Долгая память (до 15 сообщений)\n\n"
-        "Пиши /newchat, если хочешь начать новую тему."
+    await message.answer(
+        "🚀 **UnivoxAI v3.1 [Gemini 2.0 Flash]**\n\n"
+        "Я готов к работе в мультимодальном режиме:\n"
+        "• Отправляй текст или голосовые сообщения\n"
+        "• Присылай фото для анализа\n"
+        "• Я умею искать свежую информацию в Google\n\n"
+        "Команда для сброса памяти: /newchat"
     )
-    await message.answer(welcome_text, parse_mode="Markdown")
 
 @dp.message(Command("newchat"))
 async def reset_handler(message: types.Message):
-    """Ручной сброс истории диалога"""
+    """Ручной сброс контекста диалога"""
     init_chat(message.from_user.id)
-    await message.answer("🔄 **Память очищена.** Я всё забыл, давай начнем заново!")
-
-@dp.message(Command("deploy"))
-async def deploy_handler(message: types.Message):
-    """Секретная команда для принудительного обновления (только для админа)"""
-    if message.from_user.id != ADMIN_ID:
-        logger.warning(f"Попытка доступа к деплою от ID {message.from_user.id}")
-        return # Просто игнорируем чужих пользователей
-
-    if not DEPLOY_HOOK_URL:
-        return await message.answer("❌ Ошибка: DEPLOY_HOOK_URL не настроен в Render.")
-
-    await message.answer("🛠 **Инициирую пересборку проекта на Render...**")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(DEPLOY_HOOK_URL) as resp:
-                if resp.status == 200:
-                    await message.answer("✅ **Запрос отправлен!** Бот скоро уйдет на перезагрузку и обновится.")
-                else:
-                    await message.answer(f"⚠️ Render ответил кодом: {resp.status}")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка связи с Render: {e}")
+    await message.answer("🔄 **Память очищена.** Я готов к новым вопросам с чистого листа!")
 
 @dp.callback_query(F.data == "reset_session")
 async def callback_reset(callback: types.CallbackQuery):
-    """Обработка нажатия на инлайн-кнопку 'Обновить чат'"""
+    """Обработка нажатия на инлайн-кнопку сброса"""
     init_chat(callback.from_user.id)
-    await callback.message.edit_text("🔄 **История диалога обнулена.** О чем пообщаемся?")
+    await callback.message.edit_text("🔄 **Контекст обнулен.** Начинай новый диалог!")
     await callback.answer()
 
-# --- [ ОБРАБОТКА КОНТЕНТА ] ---
+# --- ОБРАБОТЧИКИ КОНТЕНТА ---
 
 @dp.message(F.text)
 async def text_handler(message: types.Message):
-    """Обработка текстовых запросов с поиском в Google"""
+    """Обработка текстовых запросов и поисковых задач"""
     uid = message.from_user.id
-    if uid not in user_data: init_chat(uid)
+    if uid not in user_data:
+        init_chat(uid)
     
     await bot.send_chat_action(message.chat.id, "typing")
     
@@ -123,88 +93,101 @@ async def text_handler(message: types.Message):
         response = chat_data['chat'].send_message(message.text)
         chat_data['count'] += 1
         
-        # Проверка на длинный диалог
-        if chat_data['count'] >= WARNING_THRESHOLD:
+        # Логика предупреждения о длине диалога
+        if chat_data['count'] == WARNING_THRESHOLD:
             builder = InlineKeyboardBuilder()
-            builder.row(types.InlineKeyboardButton(text="🔄 Начать новый чат", callback_data="reset_session"))
-            text = f"{response.text}\n\n───\n⚠️ **Контекст переполнен.** Рекомендую очистить чат для точности ответов."
-            await message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+            builder.row(types.InlineKeyboardButton(
+                text="🔄 Начать новый чат", 
+                callback_data="reset_session")
+            )
+            
+            warning_text = (
+                f"{response.text}\n\n───\n"
+                "⚠️ **Внимание:** Диалог стал длинным. Для точности ответов рекомендую обновить сессию:"
+            )
+            await message.answer(warning_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
         else:
             await message.answer(response.text, parse_mode="Markdown")
             
     except Exception as e:
-        logger.error(f"Text Error: {e}")
-        await message.answer("❌ Произошла ошибка ИИ. Попробуй /newchat")
+        logger.error(f"Text processing error: {e}")
+        await message.answer("❌ Произошла ошибка. Попробуй /newchat")
 
 @dp.message(F.voice)
 async def voice_handler(message: types.Message):
-    """Обработка голосовых сообщений (Gemini Audio)"""
+    """Обработка и анализ голосовых сообщений (Audio-to-Text/Intent)"""
     uid = message.from_user.id
-    if uid not in user_data: init_chat(uid)
+    if uid not in user_data:
+        init_chat(uid)
     
     await bot.send_chat_action(message.chat.id, "record_voice")
     
     try:
-        # Скачиваем аудио во временную память
-        file = await bot.get_file(message.voice.file_id)
+        # Скачивание аудио в буфер памяти
+        file_id = message.voice.file_id
+        file = await bot.get_file(file_id)
         voice_io = io.BytesIO()
         await bot.download_file(file.file_path, voice_io)
         
-        audio_content = {"mime_type": "audio/ogg", "data": voice_io.getvalue()}
-        chat_data = user_data[uid]
+        # Подготовка аудио-данных для Gemini
+        audio_payload = {
+            "mime_type": "audio/ogg", 
+            "data": voice_io.getvalue()
+        }
         
-        # Отправляем аудио в чат Gemini
-        response = chat_data['chat'].send_message([audio_content, "Прослушай это сообщение и ответь пользователю."])
+        chat_data = user_data[uid]
+        response = chat_data['chat'].send_message([audio_payload, "Прослушай сообщение и ответь на него."])
         chat_data['count'] += 1
         
         await message.reply(response.text, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Voice Error: {e}")
+        logger.error(f"Voice processing error: {e}")
         await message.reply("🎙 Не удалось распознать голосовое сообщение.")
 
 @dp.message(F.photo)
 async def photo_handler(message: types.Message):
-    """Анализ изображений (Gemini Vision)"""
+    """Анализ изображений (Computer Vision)"""
     await bot.send_chat_action(message.chat.id, "typing")
     try:
+        # Загрузка фото в буфер
+        photo = message.photo[-1]
         photo_io = io.BytesIO()
-        await bot.download(message.photo[-1], photo_io)
+        await bot.download(photo, photo_io)
         img = Image.open(photo_io)
         
-        prompt = message.caption if message.caption else "Что на этом изображении? Опиши подробно."
-        # Генерация контента по фото (без истории чата для экономии токенов)
+        prompt = message.caption if message.caption else "Что изображено на этом фото?"
+        
+        # Разовый запрос без сохранения в историю для экономии токенов и точности Vision
         response = model.generate_content([prompt, img])
         await message.reply(response.text, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Photo Error: {e}")
-        await message.reply("📸 Ошибка при анализе фотографии.")
+        logger.error(f"Vision processing error: {e}")
+        await message.reply("📸 Не удалось проанализировать изображение.")
 
-# --- [ ВЕБ-СЕРВЕР ДЛЯ RENDER ] ---
+# --- ВЕБ-ИНТЕРФЕЙС ДЛЯ ПИНГА (HEALTH CHECK) ---
 
 async def handle_ping(request):
-    """Эндпоинт для проверки работоспособности (Health Check)"""
-    return web.Response(text="UnivoxAI v3.2: Online on Render")
+    """Обработчик для поддержания жизни сервера на Koyeb"""
+    return web.Response(text="UnivoxAI v3.0 [Gemini 2.0 Flash] is Online")
 
 async def main():
-    # Инициализация веб-сервера
+    # Настройка веб-сервера aiohttp
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Запуск сервера на указанном порту
+    # Запуск веб-сервера на указанном порту
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
-    logger.info(f"Health-сервер запущен на порту {PORT}")
+    
+    logger.info(f"Health check server started on port {PORT}")
     
     # Запуск бота в режиме опроса (polling)
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот выключен пользователем.")
+        logger.info("Bot stopped.")
