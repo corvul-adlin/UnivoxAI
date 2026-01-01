@@ -14,7 +14,7 @@ VERSION = "v4.0 beta (Debug Mode)"
 TG_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 PORT = int(os.getenv("PORT", 10000))
-MODEL_ID = "gemini-1.5-flash"  # Используем самую стабильную модель
+MODEL_ID = "gemini-2.0-flash-exp"  # Используем самую стабильную модель
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
