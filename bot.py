@@ -26,9 +26,9 @@ genai.configure(api_key=GEMINI_KEY)
 
 # Список моделей для проверки (от самой новой к самой стабильной)
 MODEL_NAMES = [
-    'gemini-1.5-flash-latest', 
-    'models/gemini-1.5-flash', 
-    'gemini-1.5-flash',
+    'gemini-2.5-flash-latest', 
+    'models/gemini-2.5-flash', 
+    'gemini-2.5-flash',
     'gemini-pro'
 ]
 
